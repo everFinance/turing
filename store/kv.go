@@ -4,115 +4,71 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"github.com/everFinance/goar/utils"
+	"github.com/everFinance/turing/store/rawdb"
+	"github.com/everFinance/turing/store/schema"
 
 	types "github.com/everFinance/turing/common"
-	bolt "go.etcd.io/bbolt"
-	"os"
-	"path"
-	"time"
 )
 
 // init log mode
 var log = types.NewLog(types.StoreLogMode)
 
 type Store struct {
-	Db           *bolt.DB
-	databasePath string
+	KVDb rawdb.KeyValueDB
 }
 
-func NewKvStore(dirPath string, dbFileName string, bucketNames ...[]byte) (*Store, error) {
-	if err := os.MkdirAll(dirPath, os.ModePerm); err != nil {
-		return nil, err
-	}
-	dataFile := path.Join(dirPath, dbFileName)
-	boltDB, err := bolt.Open(dataFile, 0660, &bolt.Options{Timeout: 1 * time.Second, InitialMmapSize: 10e6})
+func NewBoltStore(cfg schema.Config) (*Store, error) {
+	Db, err := rawdb.NewBoltDB(cfg)
 	if err != nil {
-		if err == bolt.ErrTimeout {
-			return nil, errors.New("cannot obtain database lock,database may be in use by another process")
-		}
-		return nil, err
-	}
-	boltDB.AllocSize = boltAllocSize
-	kv := &Store{
-		Db:           boltDB,
-		databasePath: dirPath,
-	}
-	// create bucket
-	if len(bucketNames) == 0 {
-		bucketNames = append(bucketNames, AllTokenTxBucket, PoolTxIndex, ConstantBucket, AllSyncedTokenTxBucket)
-	}
-	if err := kv.Db.Update(func(tx *bolt.Tx) error {
-		return createBuckets(tx, bucketNames...)
-	}); err != nil {
-		return nil, err
+		panic(err)
 	}
 
-	return kv, nil
+	return &Store{
+		KVDb: Db,
+	}, nil
+}
+
+func NewS3Store(cfg schema.Config) (*Store, error) {
+	Db, err := rawdb.NewS3DB(cfg)
+	if err != nil {
+		panic(err)
+	}
+	return &Store{KVDb: Db}, nil
 }
 
 // DatabasePath at which this database writes files.
-func (kv *Store) DatabasePath() string {
-	return kv.databasePath
-}
-
-func createBuckets(tx *bolt.Tx, buckets ...[]byte) error {
-	for _, bucket := range buckets {
-		if _, err := tx.CreateBucketIfNotExists(bucket); err != nil {
-			return err
-		}
-	}
-	return nil
-}
+// func (kv *Store) DatabasePath() string {
+// 	return kv.databasePath
+// }
 
 // Close closes the underlying BoltDB database.
 func (kv *Store) Close() error {
-	return kv.Db.Close()
+	return kv.KVDb.Close()
 }
 
-func (kv *Store) ClearDB(dbFileName string) error {
-	if _, err := os.Stat(kv.databasePath); os.IsNotExist(err) {
-		return nil
-	}
-	if err := os.Remove(path.Join(kv.databasePath, dbFileName)); err != nil {
-		return fmt.Errorf("could not remove database file. error: %v", err)
-	}
-	return nil
+func (kv *Store) ClearDB() error {
+	return kv.KVDb.Clear()
 }
 
 // GetConstant
-func (kv *Store) GetConstant(key []byte) (value string, err error) {
-	err = kv.Db.View(func(tx *bolt.Tx) error {
-		bkt := tx.Bucket(ConstantBucket)
-		val1 := bkt.Get(key)
-		if len(val1) == 0 {
-			value = ""
-		} else {
-			value = string(val1)
-		}
-		return nil
-	})
+func (kv *Store) GetConstant(key string) (value string, err error) {
+	val, err := kv.KVDb.Get(schema.ConstantBucket, key)
+	if err == schema.ErrNotExist {
+		return "", nil
+	}
+	value = string(val)
 	return
 }
 
 // UpdateConstant
-func (kv *Store) UpdateConstant(key []byte, val []byte) error {
-	err := kv.Db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket(ConstantBucket).Put(key, val)
-	})
-	return err
+func (kv *Store) UpdateConstant(key string, val []byte) error {
+	return kv.KVDb.Put(schema.ConstantBucket, key, val)
 }
 
 // LoadPoolTxFromDb
 func (kv *Store) LoadPoolTxFromDb() (types.Transactions, error) {
-	poolHashArr := make([][]byte, 0)
-	err := kv.Db.View(func(tx *bolt.Tx) error {
-		bkt := tx.Bucket(PoolTxIndex)
-		return bkt.ForEach(func(k, v []byte) error {
-			poolHashArr = append(poolHashArr, k)
-			return nil
-		})
-	})
+	poolHashArr, err := kv.KVDb.GetAllKey(schema.PoolTxIndex)
 
 	log.Info("store load pool tx", "tx number", len(poolHashArr))
 	if err != nil {
@@ -120,53 +76,48 @@ func (kv *Store) LoadPoolTxFromDb() (types.Transactions, error) {
 	}
 
 	poolTxs := make(types.Transactions, 0, len(poolHashArr))
-	err = kv.Db.View(func(tx *bolt.Tx) error {
-		bkt := tx.Bucket(AllTokenTxBucket)
-		for _, txHash := range poolHashArr {
-			val := bkt.Get(txHash)
-			if len(val) == 0 {
-				panic("can not get pending tx from allTokenTxBucket")
-			} else {
-				ttx := &types.Transaction{}
-				err = json.Unmarshal(val, ttx)
-				if err != nil {
-					return err
-				}
-				poolTxs = append(poolTxs, ttx)
-			}
+	for _, txHash := range poolHashArr {
+		val, err := kv.KVDb.Get(schema.AllTokenTxBucket, txHash)
+		if err != nil {
+			return nil, err
 		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
+		if len(val) == 0 {
+			panic("can not get pending tx from allTokenTxBucket")
+		} else {
+			ttx := &types.Transaction{}
+			err = json.Unmarshal(val, ttx)
+			if err != nil {
+				return nil, err
+			}
+			poolTxs = append(poolTxs, ttx)
+		}
 	}
 	return poolTxs, nil
 }
 
 func (kv *Store) GetLastOnChainTx() (onChainTx *types.Transaction, err error) {
-	txHash, err := kv.GetConstant(LastOnChainTokenTxHashKey)
+	txHash, err := kv.GetConstant(schema.LastOnChainTokenTxHashKey)
 	if err != nil {
 		return nil, err
 	}
 	if txHash == "" {
-		return nil, ErrNotExist
+		return nil, schema.ErrNotExist
 	}
 
 	// get tokenTx from AllTokenTxBucket
-	err = kv.Db.View(func(tx *bolt.Tx) error {
-		bkt := tx.Bucket(AllTokenTxBucket)
-		val := bkt.Get([]byte(txHash))
-		if len(val) == 0 {
-			return errors.New("not found last onchain tokenTx from rollup AllTokenTxBucket db")
-		}
-		tt := types.Transaction{}
-		err = json.Unmarshal(val, &tt)
-		if err != nil {
-			return err
-		}
-		onChainTx = &tt
-		return nil
-	})
+	val, err := kv.KVDb.Get(schema.AllTokenTxBucket, txHash)
+	if err != nil {
+		return
+	}
+	if len(val) == 0 {
+		return nil, errors.New("not found last onchain tokenTx from rollup AllTokenTxBucket db")
+	}
+	tt := types.Transaction{}
+	err = json.Unmarshal(val, &tt)
+	if err != nil {
+		return
+	}
+	onChainTx = &tt
 	return
 }
 
@@ -176,118 +127,94 @@ func (kv *Store) PutTokenTx(tokenTx *types.Transaction) error {
 	if err != nil {
 		return err
 	}
-	err = kv.Db.Update(func(tx *bolt.Tx) error {
-		allTxBkt := tx.Bucket(AllTokenTxBucket)
-		if err := allTxBkt.Put([]byte(tokenTx.TxId), val); err != nil {
-			return err
-		}
-		return nil
-	})
-	return err
+	return kv.KVDb.Put(schema.AllTokenTxBucket, tokenTx.TxId, val)
 }
 
 // put tx id
 func (kv *Store) PutPoolTokenTxId(txId string) error {
-	err := kv.Db.Update(func(tx *bolt.Tx) error {
-		txIndexBkt := tx.Bucket(PoolTxIndex)
-		if err := txIndexBkt.Put([]byte(txId), []byte("0x01")); err != nil {
-			return err
-		}
-		return nil
-	})
-	return err
+	return kv.KVDb.Put(schema.PoolTxIndex, txId, []byte("0x01"))
 }
 
 // BatchDelPoolTokenTxId
-func (kv *Store) BatchDelPoolTokenTxId(txs types.Transactions) error {
-	err := kv.Db.Update(func(tx *bolt.Tx) error {
-		// delete PoolTxIndex
-		bkt := tx.Bucket(PoolTxIndex)
-		for _, t := range txs {
-			if err := bkt.Delete([]byte(t.TxId)); err != nil {
-				log.Error("delete pooltxIndex error", "error", err, "txs", txs)
-				return err
-			}
-		}
-		return nil
-	})
-	return err
+func (kv *Store) BatchDelPoolTokenTxId(txs types.Transactions) (err error) {
+	for _, tx := range txs {
+		err = kv.KVDb.Delete(schema.PoolTxIndex, tx.TxId)
+		return
+	}
+	return nil
 }
 
 // itob returns an 64-byte big endian representation of v.
-func itob(v uint64) []byte {
+func itob(v uint64) string {
 	b := make([]byte, 64)
 	binary.BigEndian.PutUint64(b, v)
-	return b
+	return utils.Base64Encode(b)
 }
 
-func btoi(b []byte) uint64 {
+func btoi(base64Str string) uint64 {
+	b, err := utils.Base64Decode(base64Str)
+	if err != nil {
+		panic(err)
+	}
 	return binary.BigEndian.Uint64(b)
 }
 
 // PutSubscribeTx
-func (kv *Store) PutSubscribeTx(subTx types.SubscribeTransaction) (uint64, error) {
+func (kv *Store) PutSubscribeTx(subTx types.SubscribeTransaction) (cursor uint64, err error) {
 	value, err := subTx.Marshal()
 	if err != nil {
 		log.Error("json marshal subscribe transaction error", "err", err)
 		return 0, err
 	}
 
-	var cursor uint64
-	err = kv.Db.Update(func(tx *bolt.Tx) error {
-		bkt := tx.Bucket(AllSyncedTokenTxBucket)
-		// use monotonically incrementing, for sort tx
-		id, err := bkt.NextSequence()
-		if err != nil {
-			return err
-		}
-		cursor = id
-		key := itob(id)
-		if err := bkt.Put(key, value); err != nil {
-			log.Error("store subscribe transaction error", "err", err)
-			return err
-		}
-		return nil
-	})
-
-	return cursor, err
+	seqNumBy, err := kv.GetConstant(schema.SeqNum)
+	if err != nil {
+		return
+	}
+	if len(seqNumBy) == 0 {
+		seqNumBy = itob(uint64(1))
+	}
+	cursor = btoi(seqNumBy)
+	err = kv.KVDb.Put(schema.AllSyncedTokenTxBucket, seqNumBy, value)
+	if err != nil {
+		return
+	}
+	// seqNum += 1
+	err = kv.KVDb.Put(schema.ConstantBucket, schema.SeqNum, []byte(itob(cursor+1)))
+	if err != nil {
+		_ = kv.KVDb.Delete(schema.AllSyncedTokenTxBucket, seqNumBy)
+	}
+	return
 }
 
 // UpdateLastProcessArTxId
 func (kv *Store) UpdateLastProcessArTxId(id string) error {
-	err := kv.Db.Update(func(tx *bolt.Tx) error {
-		bkt := tx.Bucket(ConstantBucket)
-		if err := bkt.Put(LastProcessArTxIdKey, []byte(id)); err != nil {
-			return err
-		}
-		return nil
-	})
-	return err
+	return kv.KVDb.Put(schema.ConstantBucket, schema.LastProcessArTxIdKey, []byte(id))
 }
 
 // LoadSubscribeTxs
-func (kv *Store) LoadSubscribeTxsToStream(cursor uint64, txChan chan<- types.SubscribeTransaction) error {
-	err := kv.Db.View(func(tx *bolt.Tx) error {
-		bkt := tx.Bucket(AllSyncedTokenTxBucket)
-
-		return bkt.ForEach(func(k, v []byte) error {
-			if btoi(k) <= cursor {
-				return nil
-			}
-			tx := &types.SubscribeTransaction{}
-			err := tx.Unmarshal(v)
-			if err != nil {
-				return err
-			}
-			tx.CursorId = btoi(k)
-			txChan <- *tx
-			return nil
-		})
-	})
+func (kv *Store) LoadSubscribeTxsToStream(cursor uint64, txChan chan<- types.SubscribeTransaction) (err error) {
+	keys, err := kv.KVDb.GetAllKey(schema.AllSyncedTokenTxBucket)
 	if err != nil {
-		return err
+		return
 	}
-	return nil
+	for _, key := range keys {
+		if btoi(key) <= cursor {
+			continue
+		}
+		val, err := kv.KVDb.Get(schema.AllSyncedTokenTxBucket, key)
+		if err != nil {
+			return err
+		}
+		tx := &types.SubscribeTransaction{}
+		err = tx.Unmarshal(val)
+		if err != nil {
+			return err
+		}
+		tx.CursorId = btoi(key)
+		txChan <- *tx
+	}
+	return
 }
 
 // // LoadRollupEverTxs load tx from rollup.db
