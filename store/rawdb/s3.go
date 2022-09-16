@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/everFinance/turing/store/schema"
 	"strings"
+	"time"
 )
 
 type S3DB struct {
@@ -54,7 +55,12 @@ func (s *S3DB) Put(bucket, key string, value []byte) (err error) {
 		Key:    aws.String(key),
 		Body:   bytes.NewReader(value),
 	}
+	var retry uint64
 	_, err = s.uploader.Upload(uploadInfo)
+	for err != nil && retry < 5 {
+		time.Sleep(time.Duration(retry) * time.Second)
+		_, err = s.uploader.Upload(uploadInfo)
+	}
 	return
 }
 

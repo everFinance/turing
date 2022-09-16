@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
 	"github.com/everFinance/goar/types"
+	ts "github.com/everFinance/turing/example/schema"
 	"github.com/everFinance/turing/rollup"
 	"github.com/everFinance/turing/store/schema"
 	"time"
@@ -9,12 +12,34 @@ import (
 
 func main() {
 	tags := []types.Tag{
-		{Name: "Owner", Value: "uGx-QfBXSwABKxjha-00dI7vvfyqIYblY6Z5L6cyTFM"},
+		{Name: "App", Value: "turing-test"},
+		{Name: "Owner", Value: "k9sXK8x5lMxxM-PbDZ13tCeZi6rOtlll5a6_rrc2oGM"},
 	}
 	suggestLastArTxId := ""
-	arOwner := "uGx-QfBXSwABKxjha-00dI7vvfyqIYblY6Z5L6cyTFM"
+	arOwner := "k9sXK8x5lMxxM-PbDZ13tCeZi6rOtlll5a6_rrc2oGM"
 	arNode := "https://arweave.net"
-	arWalletKeyPath := "./key.json"
+	arWalletKeyPath := "./k9s.json"
 	rol := rollup.New(suggestLastArTxId, arNode, "", arWalletKeyPath, arOwner, tags, schema.Config{})
-	rol.Run(5*time.Second, 999)
+	rol.Run(2*time.Minute, 999)
+	feedData(rol.AddTx())
+}
+
+func feedData(ch chan<- []byte) {
+	ticker := time.NewTicker(30 * time.Second)
+	var cnt int64
+	for {
+		select {
+		case <-ticker.C:
+			tx := &ts.Tx{
+				Name:      fmt.Sprintf("test-%v", cnt),
+				Timestamp: time.Now().UnixMilli(),
+			}
+			data, err := json.Marshal(tx)
+			if err != nil {
+				panic(err)
+			}
+			cnt += 1
+			ch <- data
+		}
+	}
 }

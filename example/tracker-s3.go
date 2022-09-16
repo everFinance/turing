@@ -17,8 +17,8 @@ func main() {
 	cursor := uint64(40)
 	dbCfg := schema.Config{
 		UseS3:     true,
-		AccKey:    "AKIATZSGGOHI72GMNSO7",
-		SecretKey: "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",
+		AccKey:    "",
+		SecretKey: "MOPfueG+//",
 		BktPrefix: "turing",
 		Region:    "ap-northeast-1",
 	}

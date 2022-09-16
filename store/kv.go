@@ -5,10 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/everFinance/goar/utils"
+	types "github.com/everFinance/turing/common"
 	"github.com/everFinance/turing/store/rawdb"
 	"github.com/everFinance/turing/store/schema"
-
-	types "github.com/everFinance/turing/common"
 )
 
 // init log mode
@@ -139,7 +138,9 @@ func (kv *Store) PutPoolTokenTxId(txId string) error {
 func (kv *Store) BatchDelPoolTokenTxId(txs types.Transactions) (err error) {
 	for _, tx := range txs {
 		err = kv.KVDb.Delete(schema.PoolTxIndex, tx.TxId)
-		return
+		if err != nil {
+			return
+		}
 	}
 	return nil
 }
