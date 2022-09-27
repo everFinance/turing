@@ -17,6 +17,7 @@ import (
 	arseeding "github.com/everFinance/arseeding/sdk"
 	"github.com/everFinance/turing/rollup/txpool"
 	"github.com/everFinance/turing/store"
+	"github.com/everFinance/turing/store/schema"
 )
 
 var log = types.NewLog(types.RollupLogMode)
@@ -63,21 +64,36 @@ func initTxPool(kv *store.Store, lastPendTokenTxHash string) (*txpool.TxPool, er
 	return pool, nil
 }
 
-// New suggestLastArTxId use rollup last on chain tx id, if server bolt.db is clear, restart server need config this args
-func New(suggestLastArTxId string, arNode, arSeedingUrl string, arWalletKeyPath string, owner string, tags []arTypes.Tag, dbDirPath string) *Rollup {
-	if len(dbDirPath) == 0 {
-		dbDirPath = store.StoreDirPath
+func initDbConfig(cfg *schema.Config) {
+	if len(cfg.DbPath) == 0 {
+		cfg.DbPath = schema.BoltDirPath
 	}
-	kv, err := store.NewKvStore(
-		dbDirPath, store.RollupDBFileName,
-		store.AllTokenTxBucket, store.PoolTxIndex, store.ConstantBucket,
-	)
+	if len(cfg.DbFileName) == 0 {
+		cfg.DbFileName = schema.RollupDBFileName
+	}
+	cfg.Bkt = []string{
+		schema.AllTokenTxBucket,
+		schema.PoolTxIndex,
+		schema.ConstantBucket,
+	}
+}
+
+// New suggestLastArTxId use rollup last on chain tx id, if server bolt.db is clear, restart server need config this args
+func New(suggestLastArTxId string, arNode, arSeedingUrl string, arWalletKeyPath string, owner string, tags []arTypes.Tag, dbConfig schema.Config) *Rollup {
+	initDbConfig(&dbConfig)
+	var err error
+	kv := &store.Store{}
+	if dbConfig.UseS3 {
+		kv, err = store.NewS3Store(dbConfig)
+	} else {
+		kv, err = store.NewBoltStore(dbConfig)
+	}
 	if err != nil {
 		panic(err)
 	}
 
 	// get constant from kv
-	lastArTxId, err := kv.GetConstant(store.LastArTxIdKey)
+	lastArTxId, err := kv.GetConstant(schema.LastArTxIdKey)
 	if err != nil {
 		panic(err)
 	}
@@ -90,11 +106,11 @@ func New(suggestLastArTxId string, arNode, arSeedingUrl string, arWalletKeyPath 
 		}
 	}
 
-	lastOnChainTokenTxHash, err := kv.GetConstant(store.LastOnChainTokenTxHashKey)
+	lastOnChainTokenTxHash, err := kv.GetConstant(schema.LastOnChainTokenTxHashKey)
 	if err != nil {
 		panic(err)
 	}
-	lastAddPoolTokenTxHash, err := kv.GetConstant(store.LastAddPoolTokenTxIdKey)
+	lastAddPoolTokenTxHash, err := kv.GetConstant(schema.LastAddPoolTokenTxIdKey)
 	if err != nil {
 		panic(err)
 	}
@@ -216,7 +232,7 @@ func (rol *Rollup) listenTokenTxToPool() {
 				panic(err)
 			} else {
 				// update LastAddPoolTokenTxIdKey
-				if err := rol.store.UpdateConstant(store.LastAddPoolTokenTxIdKey, []byte(txHash)); err != nil {
+				if err := rol.store.UpdateConstant(schema.LastAddPoolTokenTxIdKey, []byte(txHash)); err != nil {
 					panic(err)
 				}
 				rol.lastAddPoolTokenTxHash = txHash
@@ -270,17 +286,18 @@ func (rol *Rollup) sealTxOnChain(timeInterval time.Duration, maxOfRollup int) {
 
 				// on chain success and modify some status
 				// 1. modify db constants 'lastArTxId'
-				if err := rol.store.UpdateConstant(store.LastArTxIdKey, []byte(arId)); err != nil {
+				if err := rol.store.UpdateConstant(schema.LastArTxIdKey, []byte(arId)); err != nil {
 					log.Error("modify lastArTxIdKey error", "error", err, "newValue", arId)
 					panic(err)
 				}
 				// 2. modify db  constants 'lastOnChainTokenTxHash'
-				if err := rol.store.UpdateConstant(store.LastOnChainTokenTxHashKey, []byte(txs[len(txs)-1].TxId)); err != nil {
+				if err := rol.store.UpdateConstant(schema.LastOnChainTokenTxHashKey, []byte(txs[len(txs)-1].TxId)); err != nil {
 					log.Error("modify lastOnChainTokenTxHashKey error", "error", err, "newValue", txs[len(txs)-1].TxId)
 					panic(err)
 				}
 				// 3. delete poolTxIndex bucket txs index
 				if err := rol.store.BatchDelPoolTokenTxId(txs); err != nil {
+					// maybe not need panic
 					panic(err)
 				}
 				// 4. change lastTxHash

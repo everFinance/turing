@@ -3,7 +3,7 @@ package tracker
 import (
 	"github.com/everFinance/turing/common"
 	types "github.com/everFinance/turing/common"
-	"github.com/everFinance/turing/store"
+	"github.com/everFinance/turing/store/schema"
 	"time"
 )
 
@@ -25,7 +25,7 @@ func (t *Tracker) jobTxsPullFromChain() {
 
 	// get all unprocessed txs
 	// null value is return ""
-	lastTxID, err := t.store.GetConstant(store.LastProcessArTxIdKey)
+	lastTxID, err := t.store.GetConstant(schema.LastProcessArTxIdKey)
 	if err != nil {
 		log.Error("can not get lastTxID", "err", err)
 		return

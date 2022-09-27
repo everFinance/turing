@@ -1,58 +1,95 @@
 package store
 
 import (
+	"github.com/everFinance/turing/store/schema"
 	"github.com/stretchr/testify/assert"
-	bolt "go.etcd.io/bbolt"
 	"testing"
 )
 
-func TestNewKvStore(t *testing.T) {
-	dirPath := "./"
-	dbName := "test.Db"
-	kv, err := NewKvStore(dirPath, dbName, AllTokenTxBucket, PoolTxIndex, ConstantBucket)
+func TestNewBoltStore(t *testing.T) {
+	dirPath := "../bolt"
+	dbName := "tracker.db"
+	kv, err := NewBoltStore(schema.Config{DbPath: dirPath, DbFileName: dbName})
 	assert.NoError(t, err)
-	k1 := []byte("key01")
-	v1 := []byte("value01")
-	err = kv.Db.Update(func(tx *bolt.Tx) error {
-		bkt := tx.Bucket(AllTokenTxBucket)
-		err = bkt.Put(k1, v1)
-		return err
-	})
+	err = kv.UpdateConstant(schema.LastProcessArTxIdKey, []byte("f8-DEvvlAY7qPRRaHm96Sc7b1EcssK8J0IfOmQaUU2c"))
 	assert.NoError(t, err)
-
-	var val []byte
-	kv.Db.View(func(tx *bolt.Tx) error {
-		val = tx.Bucket(AllTokenTxBucket).Get(k1)
-		return nil
-	})
-	assert.Equal(t, val, v1)
-
-	err = kv.Db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket(AllTokenTxBucket).Delete(k1)
-	})
-	assert.NoError(t, err)
-
-	kv.Db.View(func(tx *bolt.Tx) error {
-		val := tx.Bucket(AllTokenTxBucket).Get(k1)
-		assert.Nil(t, val)
-		return nil
-	})
-
-	err = kv.Db.View(func(tx *bolt.Tx) error {
-		return tx.Bucket(AllTokenTxBucket).ForEach(func(k, v []byte) error {
-			t.Log(k, v)
-			return nil
-		})
-	})
-	assert.NoError(t, err)
-	err = kv.Db.View(func(tx *bolt.Tx) error {
-		return tx.Bucket(PoolTxIndex).ForEach(func(k, v []byte) error {
-			t.Log(string(k), string(v))
-			return nil
-		})
-	})
-
 }
+
+func TestNewS3Store(t *testing.T) {
+	dbCfg := schema.Config{
+		UseS3:     true,
+		AccKey:    "AKIATZSGGOHI72GMNSO7",
+		SecretKey: "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",
+		BktPrefix: "turing",
+		Region:    "ap-northeast-1",
+	}
+	kv, err := NewS3Store(dbCfg)
+	assert.NoError(t, err)
+	err = kv.UpdateConstant(schema.LastProcessArTxIdKey, []byte("f8-DEvvlAY7qPRRaHm96Sc7b1EcssK8J0IfOmQaUU2c"))
+	assert.NoError(t, err)
+}
+
+func TestClearS3(t *testing.T) {
+	dbCfg := schema.Config{
+		UseS3:     true,
+		AccKey:    "AKIATZSGGOHI72GMNSO7",
+		SecretKey: "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",
+		BktPrefix: "turing",
+		Region:    "ap-northeast-1",
+	}
+	kv, err := NewS3Store(dbCfg)
+	assert.NoError(t, err)
+	err = kv.ClearDB()
+	assert.NoError(t, err)
+}
+
+// func TestNewKvStore(t *testing.T) {
+// 	dirPath := "./"
+// 	dbName := "test.Db"
+// 	kv, err := NewKvStore(dirPath, dbName, AllTokenTxBucket, PoolTxIndex, ConstantBucket)
+// 	assert.NoError(t, err)
+// 	k1 := []byte("key01")
+// 	v1 := []byte("value01")
+// 	err = kv.Db.Update(func(tx *bolt.Tx) error {
+// 		bkt := tx.Bucket(AllTokenTxBucket)
+// 		err = bkt.Put(k1, v1)
+// 		return err
+// 	})
+// 	assert.NoError(t, err)
+//
+// 	var val []byte
+// 	kv.Db.View(func(tx *bolt.Tx) error {
+// 		val = tx.Bucket(AllTokenTxBucket).Get(k1)
+// 		return nil
+// 	})
+// 	assert.Equal(t, val, v1)
+//
+// 	err = kv.Db.Update(func(tx *bolt.Tx) error {
+// 		return tx.Bucket(AllTokenTxBucket).Delete(k1)
+// 	})
+// 	assert.NoError(t, err)
+//
+// 	kv.Db.View(func(tx *bolt.Tx) error {
+// 		val := tx.Bucket(AllTokenTxBucket).Get(k1)
+// 		assert.Nil(t, val)
+// 		return nil
+// 	})
+//
+// 	err = kv.Db.View(func(tx *bolt.Tx) error {
+// 		return tx.Bucket(AllTokenTxBucket).ForEach(func(k, v []byte) error {
+// 			t.Log(k, v)
+// 			return nil
+// 		})
+// 	})
+// 	assert.NoError(t, err)
+// 	err = kv.Db.View(func(tx *bolt.Tx) error {
+// 		return tx.Bucket(PoolTxIndex).ForEach(func(k, v []byte) error {
+// 			t.Log(string(k), string(v))
+// 			return nil
+// 		})
+// 	})
+//
+// }
 
 // func TestStore_LoadSubscribeTxsToStream(t *testing.T) {
 // 	dirPath := "./"

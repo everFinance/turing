@@ -2,6 +2,7 @@ package tracker
 
 import (
 	arseeding "github.com/everFinance/arseeding/sdk"
+	"github.com/everFinance/turing/store/schema"
 	"sync"
 	"time"
 
@@ -33,11 +34,29 @@ type Tracker struct {
 	once sync.Once
 }
 
-func New(tags []types.Tag, arNode, arSeedingUrl string, arOwner string, dbDirPath string) *Tracker {
-	if len(dbDirPath) == 0 {
-		dbDirPath = store.StoreDirPath
+func initDbConfig(cfg *schema.Config) {
+	if len(cfg.DbPath) == 0 {
+		cfg.DbPath = schema.BoltDirPath
 	}
-	kv, err := store.NewKvStore(dbDirPath, store.TrackerDBFileName, store.ConstantBucket, store.AllSyncedTokenTxBucket)
+	if len(cfg.DbFileName) == 0 {
+		cfg.DbFileName = schema.TrackerDBFileName
+	}
+	cfg.Bkt = []string{
+		schema.AllSyncedTokenTxBucket,
+		schema.ConstantBucket,
+	}
+}
+
+func New(tags []types.Tag, arNode, arSeedingUrl string, arOwner string, dbConfig schema.Config) *Tracker {
+
+	initDbConfig(&dbConfig)
+	var err error
+	kv := &store.Store{}
+	if dbConfig.UseS3 {
+		kv, err = store.NewS3Store(dbConfig)
+	} else {
+		kv, err = store.NewBoltStore(dbConfig)
+	}
 	if err != nil {
 		panic(err)
 	}
@@ -83,7 +102,7 @@ func (t *Tracker) SubscribeTx() <-chan common.SubscribeTransaction {
 }
 
 func (t *Tracker) ProcessedArTxId() (string, error) {
-	return t.store.GetConstant(store.LastProcessArTxIdKey)
+	return t.store.GetConstant(schema.LastProcessArTxIdKey)
 }
 
 func (t *Tracker) Addr() string {

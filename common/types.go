@@ -112,7 +112,8 @@ func (txs Transactions) MarshalFromOnChain() ([]byte, error) {
 	lightTxs := make(Transactions, 0, len(txs))
 	for _, tx := range txs {
 		lightTxs = append(lightTxs, &Transaction{
-			TxData: tx.TxData,
+			TxData:   tx.TxData,
+			ParentId: tx.ParentId,
 		})
 	}
 	return lightTxs.Marshal()

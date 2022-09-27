@@ -1,6 +1,9 @@
 ## Turing
 Upload the data to the arweave network in the specified order and download it from the arweave network in the order of upload.
-
+### Installation
+```bash
+go get github.com/everFinance/turing
+```
 ### Implements
 turing implements the above functionality through the rollup & tracker service
 
